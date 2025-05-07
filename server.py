@@ -1,38 +1,74 @@
-from flask import Flask, request, jsonify
-import sqlite3
-import os
+from flask import Flask, render_template, request, redirect, url_for, flash
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 app = Flask(__name__)
-DB_NAME = 'central.db'
+app.secret_key = "your_secret_key"  # تستخدم لحماية الجلسات
 
-def init_db():
-    if not os.path.exists(DB_NAME):
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL)")
-        conn.commit()
-        conn.close()
+# تحميل مفتاح الخدمة Firebase
+cred = credentials.Certificate("hi.json")  # استبدل 'hi.json' باسم ملفك
+firebase_admin.initialize_app(cred)
 
-@app.route('/api/sync', methods=['POST'])
-def sync():
-    data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
+# الاتصال بقاعدة بيانات Firestore
+db = firestore.client()
+users_ref = db.collection("users")
 
-    if not email or not password:
-        return jsonify({"status": "error", "message": "Missing email or password"}), 400
+# دالة لتسجيل المستخدم
+def register(email, password):
+    # تحقق إذا كان المستخدم مسجلًا بالفعل
+    doc = users_ref.document(email)
+    if doc.get().exists:
+        return False  # يعني أن البريد الإلكتروني موجود بالفعل
 
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", (email, password))
-        conn.commit()
-        return jsonify({"status": "success", "message": "User synced"})
-    except sqlite3.IntegrityError:
-        return jsonify({"status": "duplicate", "message": "User already exists"})
-    finally:
-        conn.close()
+    # حفظ بيانات المستخدم في Firestore
+    doc.set({"email": email, "password": password})
+    return True
 
-if __name__ == '__main__':
-    init_db()
+# دالة لتسجيل الدخول
+def login(email, password):
+    # جلب بيانات المستخدم من Firestore
+    doc = users_ref.document(email).get()
+    if doc.exists and doc.to_dict()["password"] == password:
+        return True
+    return False
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register_page():
+    if request.method == 'POST':
+        email = request.form['email']
+        password = request.form['password']
+        
+        if register(email, password):
+            flash("✅ Registered successfully.", "success")
+            return redirect(url_for('dashboard'))  # تحويل المستخدم إلى صفحة لوحة التحكم بعد التسجيل
+        else:
+            flash("❌ Email already registered.", "danger")
+            return redirect(url_for('register_page'))
+    
+    return render_template('register.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        email = request.form['email']
+        password = request.form['password']
+
+        if login(email, password):
+            flash("✅ Login successful.", "success")
+            return redirect(url_for('dashboard'))  # تحويل المستخدم إلى صفحة لوحة التحكم بعد تسجيل الدخول
+        else:
+            flash("❌ Invalid credentials.", "danger")
+            return redirect(url_for('login_page'))
+    
+    return render_template('login.html')
+
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html')
+
+if __name__ == "__main__":
     app.run(debug=True)
