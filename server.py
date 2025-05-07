@@ -32,7 +32,7 @@ def login(email, password):
         return True
     return False
 
-@app.route('/')
+@app.route('')
 def home():
     return render_template('index.html')
 
